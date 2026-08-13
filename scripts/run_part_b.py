@@ -109,6 +109,13 @@ def main() -> None:
     print(f"  crypto panel:    {cr_wide.shape}")
     print(f"  combined panel:  {combined_wide.shape}")
 
+    # Weekend-gap analysis (Innovation 7): share of each crypto ticker's
+    # cumulative return earned on days when equities were closed, measured on
+    # crypto's own 365-day calendar across the full sample.
+    gap = features.weekend_gap_analysis(cr_wide, eq_cal)
+    gap.to_csv(TABLE_DIR / "weekend_gap_returns.csv", index=False)
+    print(f"  saved results/tables/weekend_gap_returns.csv ({len(gap)} tickers)")
+
     # ------------------------------------------------------------------
     # 3. Headline panel + sentiment sector index
     # ------------------------------------------------------------------

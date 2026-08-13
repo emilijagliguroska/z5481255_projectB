@@ -31,6 +31,72 @@ def daily_returns(prices: pd.DataFrame, price_col: str = "adjClose") -> pd.DataF
 
 
 # ---------------------------------------------------------------------------
+# Station 2 — weekend-gap analysis  (Innovation 7)
+# ---------------------------------------------------------------------------
+
+def weekend_gap_analysis(
+    crypto_wide: pd.DataFrame,
+    equity_cal: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Quantify what fraction of each crypto ticker's cumulative return occurs
+    on days when equities are closed (weekends and equity holidays).
+
+    Crypto daily returns are computed on crypto's own 365-day calendar, so this
+    splits each ticker's return stream into equity-overlap days (the date is in
+    the equity trading calendar) and crypto-only days. Rows without an observed
+    return (the first day of the sample per ticker, plus any missing trading
+    days) are excluded from the cumulative products — a day with no observation
+    contributes nothing.
+
+    Parameters
+    ----------
+    crypto_wide : DataFrame
+        Wide crypto returns (index = crypto calendar date, columns = tickers),
+        as built by :func:`daily_returns` on the clean crypto panel.
+    equity_cal : DatetimeIndex
+        The full equity trading calendar (from ``etl.equity_trading_calendar``).
+
+    Returns
+    -------
+    DataFrame with one row per ticker and columns:
+        ticker, crypto_only_days, equity_overlap_days,
+        crypto_only_cum_return, equity_overlap_cum_return,
+        full_period_cum_return, weekend_return_pct
+    """
+    eq_set = set(equity_cal)
+    long = (
+        crypto_wide.reset_index()
+        .melt(id_vars="date", var_name="ticker", value_name="return")
+        .dropna(subset=["return"])
+    )
+
+    rows: list[dict] = []
+    for ticker, grp in long.groupby("ticker"):
+        grp = grp.sort_values("date")
+        is_eq = grp["date"].isin(eq_set)
+
+        # cumulative return = product of (1 + r) - 1 over the relevant days
+        eq_cum = (1.0 + grp.loc[is_eq, "return"]).prod() - 1.0
+        co_cum = (1.0 + grp.loc[~is_eq, "return"]).prod() - 1.0
+        full_cum = (1.0 + grp["return"]).prod() - 1.0
+
+        # weekend_return_pct: share of total cumulative return on non-equity days
+        wknd_pct = (co_cum / full_cum * 100.0) if full_cum != 0 else np.nan
+
+        rows.append({
+            "ticker": ticker,
+            "crypto_only_days": int((~is_eq).sum()),
+            "equity_overlap_days": int(is_eq.sum()),
+            "crypto_only_cum_return": co_cum,
+            "equity_overlap_cum_return": eq_cum,
+            "full_period_cum_return": full_cum,
+            "weekend_return_pct": wknd_pct,
+        })
+
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
 # Station 2 — headline panel assembly
 # ---------------------------------------------------------------------------
 

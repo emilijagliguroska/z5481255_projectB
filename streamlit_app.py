@@ -53,6 +53,11 @@ def _load_fusion_table() -> pd.DataFrame:
     return pd.read_csv(ROOT / "results" / "tables" / "fusion_comparison.csv")
 
 
+@st.cache_data(ttl=86_400, show_spinner="Loading weekend-gap stats...")
+def _load_weekend_gap() -> pd.DataFrame:
+    return pd.read_csv(ROOT / "results" / "tables" / "weekend_gap_returns.csv")
+
+
 def _growth_matrix(returns: pd.DataFrame) -> pd.DataFrame:
     """Wide cumulative-growth-of-$1 frame (date x fund) from long returns."""
     wide = returns.pivot(index="date", columns="fund", values="return").sort_index()
@@ -71,6 +76,49 @@ def _format_pct(v: float) -> str:
 
 def _format_metric(v: float) -> str:
     return f"{v:.2f}" if v == v else "n/a"
+
+
+# Approved stress windows (Innovation 2), all inside the out-of-sample period.
+STRESS_EVENTS = [
+    ("2022 bear market", "2022-01-03", "2022-12-30"),
+    ("FTX collapse", "2022-11-07", "2022-12-31"),
+    ("March 2023 banking stress", "2023-03-06", "2023-03-31"),
+]
+
+
+def _event_metrics(returns: pd.DataFrame, start: str, end: str) -> dict:
+    """Cumulative return, worst single day and peak-to-trough drawdown of one
+    fund's return series inside a calendar window (clipped to the fund's
+    out-of-sample range)."""
+    sub = returns[(returns["date"] >= pd.Timestamp(start))
+                  & (returns["date"] <= pd.Timestamp(end))]
+    cum = (1.0 + sub["return"]).prod() - 1.0
+    worst = sub["return"].min()
+    dd = (1.0 + sub["return"]).cumprod()
+    mdd = (dd / dd.cummax() - 1.0).min()
+    return {"cum_return": cum, "worst_day": worst, "max_drawdown": mdd}
+
+
+def _stress_chart(returns: pd.DataFrame):
+    """Drawdown chart for one fund with the stress windows shaded."""
+    import matplotlib.pyplot as plt
+
+    fund = returns["fund"].iloc[0]
+    dd = _drawdowns(returns)[fund]
+    fig, ax = plt.subplots(figsize=(10, 3.4))
+    ax.plot(dd.index, dd.values, color="steelblue", linewidth=1.2)
+    shades = {"2022 bear market": "#ef5350", "FTX collapse": "#ffa726",
+              "March 2023 banking stress": "#ab47bc"}
+    for label, start, end in STRESS_EVENTS:
+        ax.axvspan(pd.Timestamp(start), pd.Timestamp(end),
+                   color=shades[label], alpha=0.14)
+    ax.axhline(0.0, color="gray", linewidth=0.8)
+    ax.set_title(f"{fund} — drawdown with stress windows shaded")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Drawdown (negative = peak-to-trough loss)")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    return fig
 
 
 funds, facts, allocate, sentiment_tab = st.tabs(
@@ -168,6 +216,62 @@ with facts:
     st.write(f"Holdings as of {last_date.date()}")
     st.dataframe(holdings, hide_index=True, width="stretch")
 
+    if chosen.startswith("Crypto"):
+        st.subheader("Crypto weekend gap — the underlying assets")
+        st.caption("Crypto trades 365 days a year; equities do not. This shows "
+                   "how much of each coin's cumulative return over the full "
+                   "2020-2023 sample accrued on days when equities were closed "
+                   "(weekends and equity holidays). Crypto funds hold these "
+                   "coins, so their returns include moves equity investors "
+                   "never see.")
+        gap = _load_weekend_gap()
+        gap_disp = gap[["ticker", "weekend_return_pct", "crypto_only_cum_return",
+                        "equity_overlap_cum_return", "full_period_cum_return"]].copy()
+        gap_disp["weekend_return_pct"] = gap_disp["weekend_return_pct"].map(
+            lambda v: f"{v:.1f}%" if v == v else "n/a")
+        gap_disp["crypto_only_cum_return"] = gap_disp["crypto_only_cum_return"].map(_format_pct)
+        gap_disp["equity_overlap_cum_return"] = (
+            gap_disp["equity_overlap_cum_return"].map(_format_pct)
+        )
+        gap_disp["full_period_cum_return"] = gap_disp["full_period_cum_return"].map(_format_pct)
+        st.dataframe(gap_disp.rename(columns={
+            "ticker": "Coin",
+            "weekend_return_pct": "Share on equity-closed days",
+            "crypto_only_cum_return": "Cum. return on equity-closed days",
+            "equity_overlap_cum_return": "Cum. return on equity-trading days",
+            "full_period_cum_return": "Total cum. return",
+        }), hide_index=True, width="stretch")
+        median_gap = gap["weekend_return_pct"].median()
+        st.caption(
+            f"Across the {len(gap)} coins, a median {median_gap:.1f}% of total "
+            f"cumulative return came from days when equities were closed — "
+            f"exposure equities simply do not carry."
+        )
+
+    st.subheader("How bad can it get? — stress view")
+    st.caption("Out-of-sample behaviour of this fund inside three stress "
+               "windows (clipped to the fund's live range): the 2022 bear "
+               "market, the FTX collapse, and the March 2023 banking stress.")
+    stress_rows = []
+    for label, start, end in STRESS_EVENTS:
+        ev = _event_metrics(fund_ret, start, end)
+        stress_rows.append({"Event": label, "Window": f"{start} to {end}",
+                            "Cumulative return": ev["cum_return"],
+                            "Max drawdown": ev["max_drawdown"],
+                            "Worst day": ev["worst_day"]})
+    stress_tbl = pd.DataFrame(stress_rows)
+    stress_disp = stress_tbl.copy()
+    stress_disp["Cumulative return"] = stress_disp["Cumulative return"].map(_format_pct)
+    stress_disp["Max drawdown"] = stress_disp["Max drawdown"].map(_format_pct)
+    stress_disp["Worst day"] = stress_disp["Worst day"].map(_format_pct)
+    st.dataframe(stress_disp, hide_index=True, width="stretch")
+    worst_event = stress_tbl.loc[stress_tbl["Max drawdown"].idxmin()]
+    st.caption(
+        f"The deepest drawdown across these windows was "
+        f"{worst_event['Max drawdown']:.1%}, during the {worst_event['Event']}."
+    )
+    st.pyplot(_stress_chart(fund_ret))
+
 # ---------------------------------------------------------------------------
 # Tab 3 - Allocate across funds
 # ---------------------------------------------------------------------------
@@ -221,6 +325,40 @@ with sentiment_tab:
     st.header("News-sentiment analytics")
     sentiment = _load_sentiment()
     fusion_tbl = _load_fusion_table()
+
+    st.subheader("Risk warning gauge")
+    st.caption("Where each sector's latest index sits relative to its own "
+               "history. Band thresholds are the sector's 25th and 75th "
+               "percentiles over the full sample: red = below the 25th (more "
+               "negative than usual), amber = inside the central range, green "
+               "= above the 75th (more positive than usual). The index is "
+               "carry-forwarded on no-headline days and lagged one trading "
+               "day.")
+    gauge_rows = []
+    for sector, grp in sentiment.groupby("sector"):
+        grp = grp.sort_values("date")
+        latest = grp["sentiment"].iloc[-1]
+        lo = grp["sentiment"].quantile(0.25)
+        hi = grp["sentiment"].quantile(0.75)
+        band = ("Below normal" if latest < lo
+                else "Above normal" if latest > hi
+                else "Normal range")
+        gauge_rows.append({
+            "sector": sector,
+            "latest_date": grp["date"].iloc[-1].date(),
+            "latest_index": latest,
+            "band": band,
+        })
+    gauge = pd.DataFrame(gauge_rows)
+    band_color = {"Below normal": "red", "Above normal": "green",
+                  "Normal range": "orange"}
+    for _, r in gauge.sort_values("sector").iterrows():
+        st.markdown(
+            f"- **{r['sector']}**: latest index `{r['latest_index']:.3f}` "
+            f"({r['latest_date']}) — "
+            f"<span style='color:{band_color[r['band']]}'>{r['band']}</span>",
+            unsafe_allow_html=True)
+    st.bar_chart(gauge.set_index("sector")["latest_index"], height=260)
 
     st.subheader("Equity sector sentiment index")
     st.caption("VADER-compound scores per headline, equal-weighted to a ticker-day "
