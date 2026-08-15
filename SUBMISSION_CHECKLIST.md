@@ -4,7 +4,7 @@ Tick every item before you hand in. Run `python scripts/check_handin.py` to veri
 the mechanical ones.
 
 - [y] Folder is named <yourZID>_projectB (for example z3539841_projectB).
-- [ ] report/report.pdf is present (authored in Word, exported to PDF; max 10 pages
+- [y] report/report.pdf is present (authored in Word, exported to PDF; max 10 pages
       of narrative - exhibits may go in an appendix).
 - [y] The report includes every required exhibit from PROJECT_BRIEF.md, Section 5
       ("Required exhibits (Part B)"), each captioned and interpreted.
@@ -17,4 +17,8 @@ the mechanical ones.
 - [y] AGENTS.md or CLAUDE.md (your tool's file) is YOUR own, not the stub.
 - [y] ai/ contains your prompt logs and AI notes.
 - [y] The writing and interpretation are your own.
-- [ ] Submit: the zip to Moodle, the public repo link, and the live Streamlit URL.
+- [y] Submit: the zip to Moodle, the public repo link, and the live Streamlit URL.
+
+
+
+- TEACHING TEAM: the public repo link and the live Streamlit URL are listed at the top of report.pdf
